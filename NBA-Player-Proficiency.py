@@ -48,15 +48,19 @@ for i in range(len(names)):
                     specific_td = target_row.find('td', {'data-stat': data_points[x]})
                     
                     if specific_td:
-                        row.append(float(specific_td.text))
+                        row.append(float(specific_td.text)) #append stat to row
                     else:
-                        print("The specific <td> with data-stat='exampleDataStat' was not found in the target row.")
+                        print("The specific <td> was not found in the target row.")
+                        row.append(0) #append 0 to row, stat not found - will only happen in players before 1972 (No box plus minus)
                 else:
                     print("No <tr> found in the footer section.")
+                    row.append(0) #append 0 to row, stat not found
             else:
                 print("Footer section <tfoot> not found in the table.")
+                row.append(0) #append 0 to row, stat not found
         else:
-            print("Table with id='exampleTableId' not found.")
+            print("Table not found.")
+            row.append(0) #append 0 to row, stat not found
 
     # Calculate the JBR value using weights
     jbr = 0
