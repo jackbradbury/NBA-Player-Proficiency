@@ -10,13 +10,24 @@ def transform_name(name):
     name = name.replace('*', '').strip()
     # Handle special characters in names
     name = name.replace('Ä', 'c').replace('Å', 'n').replace('Ä£', 'g')
+    # Handle apostrophes and special cases
+    name = name.replace("'", "").replace(".", "")
     
     try:
         parts = name.split()
         if len(parts) >= 2:
             first = parts[0]
             last = parts[-1]  # Take the last part as the last name
-            formatted_name = f"{last[0].lower()}/{last[:5].lower()}{first[:2].lower()}"
+            
+            # Convert to lowercase first to handle any case inconsistencies
+            last = last.lower()
+            first = first.lower()
+            
+            # Remove any remaining special characters
+            last = ''.join(c for c in last if c.isalnum())
+            first = ''.join(c for c in first if c.isalnum())
+            
+            formatted_name = f"{last[0]}/{last[:5]}{first[:2]}"
             return formatted_name
         else:
             print(f"Could not parse name: {name}")
@@ -33,6 +44,17 @@ except Exception as e:
     print(f"Error reading CSV file: {e}")
     names = []
 
+# Special cases for player URL suffixes
+player_suffixes = {
+    'Kevin Johnson': '02',
+    'Walter Davis': '03',
+    'Antoine Walker': '02',
+    'Anthony Davis': '02',
+    'Kemba Walker': '02',
+    'Jaylen Brown': '02',
+    'Ray Allen': '02'
+}
+
 stats = ["Name", "PPG", "APG", 'RPG', 'SPG', 'BPG', 'TPG', 'FG%', 'WS/48', 'BPM', "JBR"]
 weights = [4, 5.882352941, 3, 5.555555556, 5.555555556, -5, 80, 350, 9.090909091]
 df = pd.DataFrame(columns=stats)
@@ -47,45 +69,108 @@ for i, name in enumerate(names):
             continue
             
         print(f"Processing {i+1}/200: {name}")
-        url = f"https://www.basketball-reference.com/players/{current}01.html"
+        
+        # Use special suffix if player is in the dictionary, otherwise use '01'
+        suffix = player_suffixes.get(name, '01')
+        url = f"https://www.basketball-reference.com/players/{current}{suffix}.html"
         
         try:
             response = requests.get(url)
             response.raise_for_status()
-            time.sleep(3)  # Be nice to the server
+            time.sleep(2)  # Be nice to the server
         except Exception as e:
             print(f"Failed to retrieve data for {name}: {e}")
             continue
 
         soup = BeautifulSoup(response.text, 'html.parser')
         row = [name]
-        tables = ["per_game_stats", "per_game_stats", "per_game_stats", "per_game_stats", 
-                 "per_game_stats", "per_game_stats", "per_game_stats", "advanced", "advanced"]
-        data_points = ['pts_per_g', 'ast_per_g', 'trb_per_g', 'stl_per_g', 'blk_per_g', 
-                      'tov_per_g', 'fg_pct', 'ws_per_48', 'bpm']
-
-        for x in range(len(tables)):
-            table = soup.find('table', {'id': tables[x]})
-            if table:
-                footer_section = table.find('tfoot')
-                if footer_section:
-                    target_row = footer_section.find('tr')
-                    if target_row:
-                        specific_td = target_row.find('td', {'data-stat': data_points[x]})
-                        if specific_td and specific_td.text.strip():
-                            try:
-                                row.append(float(specific_td.text))
-                            except ValueError:
-                                print(f"Could not convert {specific_td.text} to float for {name}")
-                                row.append(0)
-                        else:
-                            row.append(0)
-                    else:
-                        row.append(0)
+        
+        # Find all tables and print their IDs for debugging
+        all_tables = soup.find_all('table')
+        print(f"\nFound {len(all_tables)} tables for {name}")
+        for table in all_tables:
+            print(f"Table ID: {table.get('id', 'No ID')}")
+        
+        # Define table IDs and stats to look for
+        per_game_table = soup.find('table', {'id': 'per_game_stats'})
+        if per_game_table:
+            print(f"Found per_game_stats table for {name}")
+        else:
+            print(f"Could not find per_game_stats table for {name}")
+            
+        advanced_table = soup.find('table', {'id': 'advanced'})
+        
+        # Stats to collect from per_game table
+        per_game_stats = ['pts_per_g', 'ast_per_g', 'trb_per_g', 'stl_per_g', 'blk_per_g', 
+                         'tov_per_g', 'fg_pct']
+        # Stats to collect from advanced table
+        advanced_stats = ['ws_per_48', 'bpm']
+        
+        # Function to extract stat from table
+        def extract_stat(table, stat_name):
+            if not table:
+                print(f"Table not found for {name} when looking for {stat_name}")
+                return 0
+            
+            # Print table structure for debugging
+            print(f"\nLooking for {stat_name} in table for {name}")
+            
+            # Try footer first (career stats)
+            footer = table.find('tfoot')
+            if footer:
+                print("Found footer")
+                stat_cell = footer.find('td', {'data-stat': stat_name})
+                if stat_cell:
+                    print(f"Found stat cell in footer with text: {stat_cell.text.strip()}")
+                    if stat_cell.text.strip():
+                        try:
+                            return float(stat_cell.text.strip())
+                        except ValueError:
+                            print(f"Could not convert footer stat {stat_name} for {name}")
+                            pass
                 else:
-                    row.append(0)
+                    print(f"No stat cell found in footer for {stat_name}")
             else:
-                row.append(0)
+                print("No footer found")
+            
+            # If no footer stats, try the last row of the body
+            body = table.find('tbody')
+            if body:
+                print("Found table body")
+                rows = body.find_all('tr')
+                print(f"Found {len(rows)} rows in body")
+                if rows:
+                    last_row = rows[-1]
+                    stat_cell = last_row.find('td', {'data-stat': stat_name})
+                    if stat_cell:
+                        print(f"Found stat cell in body with text: {stat_cell.text.strip()}")
+                        if stat_cell.text.strip():
+                            try:
+                                return float(stat_cell.text.strip())
+                            except ValueError:
+                                print(f"Could not convert body stat {stat_name} for {name}")
+                                pass
+                    else:
+                        print(f"No stat cell found in body for {stat_name}")
+            else:
+                print("No table body found")
+            
+            print(f"No valid stat found for {stat_name} for {name}")
+            return 0
+        
+        # Extract per_game stats
+        print(f"\nProcessing per_game stats for {name}")
+        for stat in per_game_stats:
+            value = extract_stat(per_game_table, stat)
+            print(f"{name} - {stat}: {value}")
+            row.append(value)
+        
+        # Extract advanced stats
+        print(f"\nProcessing advanced stats for {name}")
+        for stat in advanced_stats:
+            value = extract_stat(advanced_table, stat)
+            print(f"{name} - {stat}: {value}")
+            row.append(value)
 
         # Calculate the JBR value using weights
         jbr = 0
